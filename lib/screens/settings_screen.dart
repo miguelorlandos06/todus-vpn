@@ -1,12 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../core/vpn_bridge.dart';
 import '../theme/app_theme.dart';
 import '../widgets/panels.dart';
-
-/// URL del buzón por defecto (v1.4: bucket/prefijo proxy_r2).
-const String kDefaultBaseUrl = 'https://152.207.206.86/public/dk/proxy_r2';
+import 'login_screen.dart';
 
 /// Pantalla de **Ajustes Avanzados**.
 ///
@@ -44,9 +41,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   String _appFilter = '';
   bool _loadingApps = false;
 
-  // Conexión y seguridad: mostrar/ocultar la clave compartida.
-  bool _obscureSecret = true;
-
   @override
   void initState() {
     super.initState();
@@ -56,6 +50,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _loadAll() async {
     setState(() => _loading = true);
     final values = await widget.bridge.getSettings();
+    final account = await widget.bridge.getAccount();
+    values['account_phone'] = account?.phone ?? '';
     final allowed = (values['allowed_apps'] as String? ?? '').split('\n')
         .map((e) => e.trim())
         .where((e) => e.isNotEmpty)
@@ -87,6 +83,37 @@ class _SettingsScreenState extends State<SettingsScreen> {
         key: value,
       };
     });
+  }
+
+  /// Cierra la sesión toDus y vuelve a la pantalla de login.
+  Future<void> _logout() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('¿Cerrar sesión?'),
+        content: const Text(
+          'Se detendrá la VPN y se olvidará el número de toDus de este '
+          'dispositivo. Necesitarás volver a ingresar tu número.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Cerrar sesión'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    await widget.bridge.logout();
+    if (!mounted) return;
+    Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
+      MaterialPageRoute<void>(builder: (_) => LoginScreen(bridge: widget.bridge)),
+      (route) => false,
+    );
   }
 
   Future<void> _save() async {
@@ -177,6 +204,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         'ipv6_enabled': false,
         'relay_secret': '',
         'base_url': '',
+        'rtc_server': '',
         'allowed_apps': '',
       };
       _selectedApps.clear();
@@ -230,7 +258,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         style: theme.textTheme.headlineSmall),
                     const SizedBox(height: 4),
                     Text(
-                      'Parámetros ajustables del túnel relay. Los cambios se '
+                      'Parámetros del túnel RTC. Los cambios se '
                       'aplican al reconectar la VPN.',
                       style: theme.textTheme.bodySmall,
                     ),
@@ -489,88 +517,46 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                   ),
                   const SizedBox(height: 24),
-                  const SectionHeader(label: 'Conexión y seguridad'),
+                  const SectionHeader(label: 'Servidor RTC (WebRTC)'),
                   HairlineCard(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
                         TextFormField(
-                          initialValue: _values['relay_secret'] as String? ?? '',
-                          obscureText: _obscureSecret,
-                          autocorrect: false,
-                          enableSuggestions: false,
-                          decoration: InputDecoration(
-                            labelText: 'Clave compartida (HMAC)',
-                            helperText: 'Vacío = clave interna. Hex de 64 o frase '
-                                '(se deriva con SHA-256). Debe coincidir con '
-                                'PROXY_SHARED_SECRET del servidor.',
-                            suffixIcon: IconButton(
-                              tooltip: _obscureSecret
-                                  ? 'Mostrar clave'
-                                  : 'Ocultar clave',
-                              icon: Icon(
-                                _obscureSecret
-                                    ? Icons.visibility_outlined
-                                    : Icons.visibility_off_outlined,
-                              ),
-                              onPressed: () =>
-                                  setState(() => _obscureSecret = !_obscureSecret),
-                            ),
-                          ),
-                          onChanged: (v) => _set('relay_secret', v),
-                        ),
-                        const HairlineDivider(),
-                        TextFormField(
-                          initialValue: _values['base_url'] as String? ?? '',
+                          initialValue: _values['rtc_server'] as String? ?? '',
                           autocorrect: false,
                           enableSuggestions: false,
                           keyboardType: TextInputType.url,
                           decoration: const InputDecoration(
-                            labelText: 'URL del buzón (bucket/prefijo)',
-                            helperText: 'Por defecto: https://152.207.206.86/public/dk/proxy_r2 — '
-                                'cámbiala a la vez en el servidor.',
+                            labelText: 'Dirección del rtcvpn-server',
+                            helperText: 'Vacío = auto-descubrimiento (GitHub). '
+                                'Ejemplo: http://20.123.45.67:8080',
                           ),
-                          onChanged: (v) => _set('base_url', v),
+                          onChanged: (v) => _set('rtc_server', v),
                         ),
                         const HairlineDivider(),
                         Padding(
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 16, vertical: 8),
+                              horizontal: 16, vertical: 10),
                           child: Row(
                             children: [
+                              const Icon(Icons.person_outline,
+                                  size: 20, color: AppColors.textMuted),
+                              const SizedBox(width: 12),
                               Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      'Hex efectivo (cópialo al servidor)',
-                                      style: theme.textTheme.labelMedium,
-                                    ),
-                                    const SizedBox(height: 2),
-                                    Text(
-                                      _values['relay_secret_effective'] as String?
-                                              ??
-                                          '',
-                                      style: theme.textTheme.bodySmall,
-                                    ),
-                                  ],
+                                child: Text(
+                                  'Cuenta toDus: ${(_values['account_phone'] as String?)?.isNotEmpty == true ? _values['account_phone'] : '—'}',
+                                  style: theme.textTheme.bodyMedium,
                                 ),
                               ),
-                              IconButton(
-                                tooltip: 'Copiar hex',
-                                icon: const Icon(Icons.copy_outlined, size: 18),
-                                onPressed: () {
-                                  final hex = _values['relay_secret_effective']
-                                          as String? ??
-                                      '';
-                                  if (hex.isNotEmpty) {
-                                    Clipboard.setData(ClipboardData(text: hex));
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                          content: Text('Hex efectivo copiado')),
-                                    );
-                                  }
-                                },
+                              TextButton.icon(
+                                onPressed: _logout,
+                                icon: const Icon(Icons.logout, size: 18),
+                                label: const Text('Salir'),
+                                style: TextButton.styleFrom(
+                                  foregroundColor: AppColors.danger,
+                                  visualDensity: VisualDensity.compact,
+                                ),
                               ),
                             ],
                           ),

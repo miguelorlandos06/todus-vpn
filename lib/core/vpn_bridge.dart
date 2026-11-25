@@ -29,6 +29,11 @@ class VpnStats {
     this.httpSemaphoreWait = 0,
     this.tcpBatchesSent = 0,
     this.sessionsRejectedByLimit = 0,
+    this.rtcFramesUp = 0,
+    this.rtcFramesDown = 0,
+    this.rtcStreamsOpened = 0,
+    this.dnsOverTcpQueries = 0,
+    this.udpDirectFlows = 0,
   });
 
   final int uptimeMs;
@@ -52,6 +57,13 @@ class VpnStats {
   final int httpSemaphoreWait;
   final int tcpBatchesSent;
   final int sessionsRejectedByLimit;
+
+  // Métricas del túnel RTC (WebRTC DataChannel).
+  final int rtcFramesUp;
+  final int rtcFramesDown;
+  final int rtcStreamsOpened;
+  final int dnsOverTcpQueries;
+  final int udpDirectFlows;
 
   /// Fallos totales del relay (GET + PUT).
   int get storeFailures => storeGetFail + storePutFail;
@@ -85,6 +97,11 @@ class VpnStats {
       httpSemaphoreWait: asInt('httpSemaphoreWait'),
       tcpBatchesSent: asInt('tcpBatchesSent'),
       sessionsRejectedByLimit: asInt('sessionsRejectedByLimit'),
+      rtcFramesUp: asInt('rtcFramesUp'),
+      rtcFramesDown: asInt('rtcFramesDown'),
+      rtcStreamsOpened: asInt('rtcStreamsOpened'),
+      dnsOverTcpQueries: asInt('dnsOverTcpQueries'),
+      udpDirectFlows: asInt('udpDirectFlows'),
     );
   }
 }
@@ -98,6 +115,11 @@ class VpnSnapshot {
     this.logLines = const <String>[],
     this.speedUp = 0,
     this.speedDown = 0,
+    this.rtcPhase = '',
+    this.rtcPhaseDetail = '',
+    this.rtcServerPhone = '',
+    this.rtcWaitlistPosition = 0,
+    this.accountPhone = '',
   });
 
   final VpnState state;
@@ -110,7 +132,38 @@ class VpnSnapshot {
   final double speedUp;
   final double speedDown;
 
+  /// Fase del túnel RTC (autenticando, negociando, esperando-canal, conectado…).
+  final String rtcPhase;
+  final String rtcPhaseDetail;
+  final String rtcServerPhone;
+  final int rtcWaitlistPosition;
+  final String accountPhone;
+
   bool get isActive => state == VpnState.active;
+
+  /// Texto humano del paso actual de la conexión RTC.
+  String get rtcPhaseLabel {
+    switch (rtcPhase) {
+      case 'autenticando':
+        return 'Autenticando cuenta toDus…';
+      case 'descubriendo':
+        return 'Buscando servidor RTC…';
+      case 'xmpp':
+        return 'Conectando señalización toDus…';
+      case 'solicitando':
+        return 'Solicitando canal al servidor…';
+      case 'esperando-canal':
+        return 'Esperando canal libre (posición $rtcWaitlistPosition)…';
+      case 'negociando':
+        return 'Negociando WebRTC (TURN)…';
+      case 'conectado':
+        return 'Túnel activo${rtcServerPhone.isEmpty ? '' : ' vía $rtcServerPhone'}';
+      case '':
+        return '';
+      default:
+        return rtcPhaseDetail.isEmpty ? rtcPhase : '$rtcPhase: $rtcPhaseDetail';
+    }
+  }
 }
 
 /// Puente con el núcleo Kotlin a través del MethodChannel `todus.vpn/bridge`.
@@ -207,6 +260,11 @@ class VpnBridge extends ChangeNotifier {
       logLines: logLines,
       speedUp: speedUp,
       speedDown: speedDown,
+      rtcPhase: raw['rtcPhase'] as String? ?? '',
+      rtcPhaseDetail: raw['rtcPhaseDetail'] as String? ?? '',
+      rtcServerPhone: raw['rtcServerPhone'] as String? ?? '',
+      rtcWaitlistPosition: raw['rtcWaitlistPosition'] as int? ?? 0,
+      accountPhone: raw['accountPhone'] as String? ?? '',
     );
     notifyListeners();
   }
@@ -324,6 +382,56 @@ class VpnBridge extends ChangeNotifier {
       return const <InstalledApp>[];
     }
   }
+
+  // ─── Cuenta toDus (pantalla de login) ──────────────────────────
+
+  /// Inicia sesión en toDus con el número dado (el JWT se solicita en Kotlin
+  /// con un secreto aleatorio de 32 caracteres). Devuelve el teléfono completo
+  /// o null si falló (lanza con el mensaje del servidor).
+  Future<String> loginToDus(String phone) async {
+    final raw = await _channel.invokeMapMethod<String, dynamic>('login', <String, dynamic>{
+      'phone': phone,
+    });
+    return raw?['phone'] as String? ?? '';
+  }
+
+  /// ¿Hay cuenta guardada? Devuelve null si nunca se ha iniciado sesión.
+  Future<TodusAccount?> getAccount() async {
+    try {
+      final raw = await _channel.invokeMapMethod<String, dynamic>('getAccount');
+      if (raw == null || raw['hasAccount'] != true) return null;
+      return TodusAccount(
+        phone: raw['phone'] as String? ?? '',
+        jid: raw['jid'] as String? ?? '',
+        jwtValid: raw['jwtValid'] == true,
+      );
+    } on PlatformException {
+      return null;
+    } on MissingPluginException {
+      return null;
+    }
+  }
+
+  /// Cierra sesión (detiene la VPN y borra la cuenta persistida).
+  Future<void> logout() async {
+    try {
+      await _channel.invokeMethod<bool>('logout');
+    } on PlatformException {
+      // ignorar
+    } on MissingPluginException {
+      // entorno de pruebas
+    }
+    await _refresh();
+  }
+}
+
+/// Cuenta toDus guardada en el lado nativo.
+class TodusAccount {
+  const TodusAccount({required this.phone, required this.jid, required this.jwtValid});
+
+  final String phone;
+  final String jid;
+  final bool jwtValid;
 }
 
 /// App instalada visible para la selección de filtrado.

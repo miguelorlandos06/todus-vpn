@@ -34,6 +34,14 @@ class VpnStats {
     val tcpFramesCoalesced = AtomicLong(0)   // frames individuales absorbidos por un batch
     val sessionsRejectedByLimit = AtomicLong(0) // sesiones rechazadas por el semáforo de concurrencia
 
+    // ─── RTC / WebRTC (transporte nuevo) ─────────────────────────────────────
+    val rtcConnectedAt = AtomicLong(0)       // momento en que el DataChannel abrió
+    val rtcFramesUp = AtomicLong(0)          // frames DATA enviados al server
+    val rtcFramesDown = AtomicLong(0)        // frames DATA recibidos del server
+    val rtcStreamsOpened = AtomicLong(0)     // streams TCP creados sobre el DC
+    val dnsOverTcpQueries = AtomicLong(0)    // consultas DNS resueltas por TCP dentro del túnel
+    val udpDirectFlows = AtomicInteger(0)    // flujos UDP reenviados directos (fuera del túnel)
+
     fun uptimeMillis(): Long {
         val start = startedAt.get()
         return if (start == 0L) 0L else System.currentTimeMillis() - start

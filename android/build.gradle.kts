@@ -1,5 +1,7 @@
 allprojects {
     repositories {
+        // Mirror de Maven Central (fall-back si repo1.maven.org rate-limitea).
+        maven { url = uri("https://maven.aliyun.com/repository/central") }
         google()
         mavenCentral()
     }

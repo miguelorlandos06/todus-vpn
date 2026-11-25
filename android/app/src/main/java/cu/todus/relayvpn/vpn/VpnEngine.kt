@@ -3,10 +3,9 @@ package cu.todus.relayvpn.vpn
 import android.net.VpnService
 import android.os.ParcelFileDescriptor
 import cu.todus.relayvpn.AppLog
-import cu.todus.relayvpn.RelayProtocol
 import cu.todus.relayvpn.RelaySettings
+import cu.todus.relayvpn.RtcController
 import cu.todus.relayvpn.SocksServer
-import cu.todus.relayvpn.TodusStore
 import cu.todus.relayvpn.VpnStats
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -14,22 +13,27 @@ import java.io.IOException
 import kotlin.concurrent.thread
 
 /**
- * Motor de la VPN: establece la interfaz TUN (VpnService.Builder), arranca el
- * SOCKS5 local (puerto fiel de movil_proxy.py) y traduce todo el tráfico IP del
- * dispositivo hacia ese proxy:
+ * Motor de la VPN: establece la interfaz TUN (VpnService.Builder), conecta el
+ * túnel WebRTC contra rtcvpn-server y traduce todo el tráfico IP del
+ * dispositivo hacia ese túnel:
  *
- *   apps -> TUN -> [pila TCP / túnel UDP] -> SOCKS5 127.0.0.1:1080 -> ToDus -> VPS
+ *   apps -> TUN -> [pila TCP / DNS-TCP + UDP directo] -> SOCKS5 127.0.0.1:1080
+ *        -> DataChannel WebRTC (TURN) -> rtcvpn-server -> Internet
  *
- * El tráfico HTTP hacia ToDus queda fuera de la VPN (protect + paquete excluido),
- * así que no hay bucle.
+ * El tráfico de la propia app (XMPP, TURN, API del server) queda fuera de la
+ * VPN (protect + paquete excluido), así que no hay bucle.
  */
 class VpnEngine(
     private val service: VpnService,
     val settings: RelaySettings,
     val stats: VpnStats,
 ) {
-    lateinit var store: TodusStore
+    lateinit var rtc: RtcController
         private set
+
+    /** RtcController si ya fue inicializado (para consultas de estado). */
+    fun currentRtc(): RtcController? =
+        if (this::rtc.isInitialized) rtc else null
     lateinit var socksServer: SocksServer
         private set
     lateinit var tcp: TcpStack
@@ -40,8 +44,12 @@ class VpnEngine(
     val socksHost: String = "127.0.0.1"
     val socksPort: Int get() = settings.socksPort
 
-    /** Protege un socket para que su tráfico no regrese por el TUN (bucle). */
+    /** Protege un socket TCP para que su tráfico no regrese por el TUN (bucle). */
     fun protect(socket: java.net.Socket): Boolean =
+        try { service.protect(socket) } catch (e: Exception) { false }
+
+    /** Protege un socket UDP (reenvío directo) para que no loop por el TUN. */
+    fun protectUdp(socket: java.net.DatagramSocket): Boolean =
         try { service.protect(socket) } catch (e: Exception) { false }
 
     private var tun: ParcelFileDescriptor? = null
@@ -52,9 +60,18 @@ class VpnEngine(
     @Volatile var running = false
         private set
 
+    /** Callback fatal: el túnel RTC cayó después de estar activo. */
+    @Volatile var onFatalCallback: ((String) -> Unit)? = null
+
     fun start() {
-        store = TodusStore(settings, service, stats)
-        socksServer = SocksServer(settings, store, stats)
+        // 1. Túnel WebRTC contra rtcvpn-server (auth + /connect + XMPP + TURN).
+        //    Falla limpio aquí si no se puede establecer — sin TUN sin túnel.
+        rtc = RtcController(service, settings, stats)
+        rtc.onFatal = { reason -> onFatalCallback?.invoke(reason) }
+        rtc.connect()
+
+        // 2. SOCKS5 local sobre el DataChannel.
+        socksServer = SocksServer(settings, rtc, stats)
         socksServer.start()
 
         val builder = service.Builder()
@@ -68,7 +85,7 @@ class VpnEngine(
         }
         var dnsAdded = 0
         for (dns in settings.remoteDns) {
-            val ip = RelayProtocol.parseIpAddress(dns) ?: continue
+            val ip = RelaySettings.parseIpForDns(dns) ?: continue
             if (ip.size == 16 && !settings.ipv6Enabled) continue
             builder.addDnsServer(dns)
             dnsAdded++
@@ -246,6 +263,7 @@ class VpnEngine(
     fun stop() {
         if (!running) {
             closeQuietly()
+            try { rtcStop() } catch (e: Exception) {}
             return
         }
         running = false
@@ -264,8 +282,20 @@ class VpnEngine(
         } catch (e: Exception) {
             // ignorar
         }
+        try {
+            rtcStop()
+        } catch (e: Exception) {
+            // ignorar
+        }
         closeQuietly()
         AppLog.i("[*] VPN detenida")
+    }
+
+    private fun rtcStop() {
+        if (this::rtc.isInitialized) {
+            rtc.onFatal = null
+            rtc.stop()
+        }
     }
 
     private fun closeQuietly() {

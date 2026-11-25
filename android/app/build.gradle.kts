@@ -74,8 +74,10 @@ flutter {
 }
 
 dependencies {
-    // Solo lo que usa el núcleo Kotlin (idéntico al de la APK original).
+    // Núcleo Kotlin.
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+    // WebRTC DataChannel (libwebrtc empaquetado para Android) — túnel contra rtcvpn-server.
+    implementation("io.getstream:stream-webrtc-android:1.1.3")
 }

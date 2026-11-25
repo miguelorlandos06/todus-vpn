@@ -110,21 +110,19 @@ class StatsScreen extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 24),
-                    const SectionHeader(label: 'Relay ToDus'),
+                    const SectionHeader(label: 'Túnel RTC (WebRTC)'),
                     HairlineCard(
                       child: Column(
                         children: [
-                          StatRow(label: 'Lecturas correctas (GET)', value: formatCount(s.storeGetOk)),
+                          StatRow(label: 'Streams TCP abiertos', value: formatCount(s.rtcStreamsOpened)),
                           const HairlineDivider(),
-                          StatRow(label: 'Publicaciones correctas (PUT)', value: formatCount(s.storePutOk)),
+                          StatRow(label: 'Frames enviados', value: formatCount(s.rtcFramesUp)),
                           const HairlineDivider(),
-                          StatRow(
-                            label: 'Operaciones fallidas',
-                            value: formatCount(s.storeFailures),
-                            valueColor: s.storeFailures > 0 ? danger : null,
-                          ),
+                          StatRow(label: 'Frames recibidos', value: formatCount(s.rtcFramesDown)),
                           const HairlineDivider(),
-                          StatRow(label: 'Objetos borrados (DELETE)', value: formatCount(s.storeDeleteOk)),
+                          StatRow(label: 'Consultas DNS por TCP', value: formatCount(s.dnsOverTcpQueries)),
+                          const HairlineDivider(),
+                          StatRow(label: 'Flujos UDP directos', value: formatCount(s.udpDirectFlows)),
                         ],
                       ),
                     ),

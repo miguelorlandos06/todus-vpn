@@ -53,7 +53,7 @@
             </intent-filter>
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Relay VPN (VpnService) que transporta TCP y UDP del dispositivo a traves del relay de objetos ToDus, igual que MOBILE/movil_proxy.py." />
+                android:value="VPN tunelizada por WebRTC DataChannel (TURN de toDus) contra rtcvpn-server: la app autentica con numero de toDus (JWT) y enruta el trafico TCP del dispositivo a traves del canal asignado por el pool del servidor." />
         </service>
 
         <meta-data

@@ -10,6 +10,7 @@ import cu.todus.relayvpn.vpn.TodusVpnService
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import kotlin.concurrent.thread
 
 /**
  * Puente Flutter ↔ núcleo Kotlin de la VPN.
@@ -64,6 +65,41 @@ class MainActivity : FlutterActivity() {
                     ))
                 }
                 "listInstalledApps" -> result.success(listInstalledApps())
+                // ── Cuenta toDus (login JWT con teléfono + secreto aleatorio) ──
+                "login" -> {
+                    val phone = call.argument<String>("phone") ?: ""
+                    thread(name = "todus-login", isDaemon = true) {
+                        try {
+                            val account = TodusAuth.login(this, phone)
+                            result.success(mapOf(
+                                "ok" to true,
+                                "phone" to account.phone,
+                                "jid" to account.jid,
+                                "jwtExpiresAt" to account.jwtExp,
+                            ))
+                        } catch (e: Exception) {
+                            result.error("LOGIN", e.message ?: "fallo el login toDus", null)
+                        }
+                    }
+                }
+                "getAccount" -> {
+                    val account = TodusAuth.load(this)
+                    result.success(
+                        if (account == null) mapOf("hasAccount" to false)
+                        else mapOf(
+                            "hasAccount" to true,
+                            "phone" to account.phone,
+                            "jid" to account.jid,
+                            "jwtValid" to account.jwtValid(),
+                            "jwtExpiresAt" to account.jwtExp,
+                        )
+                    )
+                }
+                "logout" -> {
+                    stopVpnService()
+                    TodusAuth.logout(this)
+                    result.success(true)
+                }
                 else -> result.notImplemented()
             }
         }
@@ -167,10 +203,13 @@ class MainActivity : FlutterActivity() {
 
     // ---------------------------------------------------------------- estado
 
-    /** Estado completo para la interfaz Flutter: estado, error, estadísticas y registro. */
+    /** Estado completo para la interfaz Flutter: estado, error, estadísticas, registro y fase RTC. */
     private fun buildStatus(): Map<String, Any> {
         val service = TodusVpnService.instance
         val stats = service?.stats
+        val engine = service?.engine
+        val rtc = engine?.currentRtc()
+        val account = TodusAuth.load(this)
         return mutableMapOf(
             "state" to TodusVpnService.state,
             "lastError" to (TodusVpnService.lastError ?: ""),
@@ -189,12 +228,24 @@ class MainActivity : FlutterActivity() {
             "storePutFail" to (stats?.storePutFail?.get() ?: 0L),
             "storeDeleteOk" to (stats?.storeDeleteOk?.get() ?: 0L),
             "otherProtoDropped" to (stats?.otherProtoDropped?.get() ?: 0L),
-            // Nuevas métricas de resiliencia.
+            // Métricas de resiliencia.
             "backoffEvents" to (stats?.backoffEvents?.get() ?: 0L),
             "circuitOpenCount" to (stats?.circuitOpenCount?.get() ?: 0L),
             "httpSemaphoreWait" to (stats?.httpSemaphoreWait?.get() ?: 0L),
             "tcpBatchesSent" to (stats?.tcpBatchesSent?.get() ?: 0L),
             "sessionsRejectedByLimit" to (stats?.sessionsRejectedByLimit?.get() ?: 0L),
+            // ── RTC ──
+            "rtcPhase" to (rtc?.phase ?: ""),
+            "rtcPhaseDetail" to (rtc?.phaseDetail ?: ""),
+            "rtcServerPhone" to (rtc?.serverPhone ?: ""),
+            "rtcServerUrl" to (rtc?.serverUrl ?: ""),
+            "rtcWaitlistPosition" to (rtc?.waitlistPosition ?: 0),
+            "rtcFramesUp" to (stats?.rtcFramesUp?.get() ?: 0L),
+            "rtcFramesDown" to (stats?.rtcFramesDown?.get() ?: 0L),
+            "rtcStreamsOpened" to (stats?.rtcStreamsOpened?.get() ?: 0L),
+            "dnsOverTcpQueries" to (stats?.dnsOverTcpQueries?.get() ?: 0L),
+            "udpDirectFlows" to (stats?.udpDirectFlows?.get() ?: 0),
+            "accountPhone" to (account?.phone ?: ""),
             "log" to AppLog.snapshot(),
         )
     }

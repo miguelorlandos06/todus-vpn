@@ -19,10 +19,11 @@ import android.content.SharedPreferences
  *    teléfono.
  */
 data class RelaySettings(
-    val baseUrl: String,                 // TODUS_BASE_URL
-    val hostHeader: String?,             // TODUS_HOST_HEADER
-    val sharedSecret: ByteArray,          // PROXY_SHARED_SECRET (32+ bytes)
-    val verifyTls: Boolean,               // TODUS_VERIFY_TLS
+    val baseUrl: String,                 // (legacy relay S3; no se usa en RTC)
+    val rtcServer: String,               // URL manual del rtcvpn-server (vacío = auto-descubrimiento)
+    val hostHeader: String?,             // TODUS_HOST_HEADER (legacy)
+    val sharedSecret: ByteArray,          // PROXY_SHARED_SECRET (legacy)
+    val verifyTls: Boolean,               // TODUS_VERIFY_TLS (legacy)
     val socksHost: String,                // SOCKS_HOST
     val socksPort: Int,                   // SOCKS_PORT
     val pollInterval: Double,             // POLL_INTERVAL (s)
@@ -143,6 +144,8 @@ data class RelaySettings(
         // Conexión y seguridad (nuevos en v1.4).
         const val KEY_RELAY_SECRET = "relay_secret"
         const val KEY_BASE_URL = "base_url"
+        // Servidor RTC (WebRTC). Vacío = auto-descubrimiento vía GitHub raw.
+        const val KEY_RTC_SERVER = "rtc_server"
 
         private val HEX64 = Regex("^[0-9a-fA-F]{64}$")
 
@@ -180,6 +183,19 @@ data class RelaySettings(
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
         /**
+         * Valida que una cadena sea una IP (v4 o v6) para usarla como DNS del
+         * TUN. Devuelve sus bytes o null. (Antes RelayProtocol.parseIpAddress.)
+         */
+        fun parseIpForDns(s: String): ByteArray? {
+            return try {
+                val addr = java.net.InetAddress.getByName(s)
+                if (addr.hostAddress == s || s.contains(":")) addr.address else null
+            } catch (e: Exception) {
+                null
+            }
+        }
+
+        /**
          * Convierte la clave escrita por el usuario en los bytes del HMAC:
          *  - 64 caracteres hexadecimales → se usan tal cual (32 bytes).
          *  - Cualquier otra frase → SHA-256 de la frase (32 bytes), con la MISMA
@@ -213,6 +229,7 @@ data class RelaySettings(
             return RelaySettings(
                 baseUrl = p.getString(KEY_BASE_URL, "")?.trim().takeUnless { it.isNullOrEmpty() }
                     ?: DEFAULT_BASE_URL,
+                rtcServer = p.getString(KEY_RTC_SERVER, "")?.trim() ?: "",
                 hostHeader = DEFAULT_HOST_HEADER,
                 sharedSecret = secret,
                 verifyTls = DEFAULT_VERIFY_TLS,
@@ -297,6 +314,7 @@ data class RelaySettings(
                 KEY_RELAY_SECRET to (prefs(context).getString(KEY_RELAY_SECRET, "") ?: ""),
                 KEY_BASE_URL to (prefs(context).getString(KEY_BASE_URL, "") ?: ""),
                 "relay_secret_effective" to bytesToHex(s.sharedSecret),
+                KEY_RTC_SERVER to s.rtcServer,
             )
         }
 

@@ -77,6 +77,19 @@ class TodusVpnService : android.net.VpnService() {
             try {
                 val settings = RelaySettings.fromPrefs(this)
                 val newEngine = VpnEngine(this, settings, stats)
+                // Si el túnel RTC cae más tarde, marcar error y detener el servicio.
+                newEngine.onFatalCallback = { reason ->
+                    android.os.Handler(mainLooper).post {
+                        if (state == STATE_ACTIVE) {
+                            lastError = reason
+                            state = STATE_ERROR
+                            AppLog.e("[!] túnel RTC caído: $reason")
+                            updateNotification(getString(R.string.state_error))
+                            stopForeground(STOP_FOREGROUND_REMOVE)
+                            stopSelf()
+                        }
+                    }
+                }
                 newEngine.start()
                 engine = newEngine
                 state = STATE_ACTIVE

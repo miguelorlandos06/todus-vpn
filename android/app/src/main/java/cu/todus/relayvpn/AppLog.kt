@@ -16,6 +16,11 @@ object AppLog {
         Log.i("TodusVpn", message)
     }
 
+    /** Nivel debug: solo Logcat (no llena el búfer de la interfaz). */
+    fun d(message: String) {
+        Log.d("TodusVpn", message)
+    }
+
     fun w(message: String) {
         add("WARN", message)
         Log.w("TodusVpn", message)

@@ -40,13 +40,33 @@ Map<String, Object> _statusMap({
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  // Cuenta guardada por defecto: la app arranca en el Home (no en el login).
+  Map<String, Object> accountMap({bool hasAccount = true}) => <String, Object>{
+    'hasAccount': hasAccount,
+    'phone': '5350256349',
+    'jid': '5350256349@im.todus.cu',
+    'jwtValid': true,
+    'jwtExpiresAt': 4102444800,
+  };
+
   tearDown(() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(_channel, null);
   });
 
+  void mockAccount() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(_channel, (call) async {
+      if (call.method == 'getAccount') return accountMap();
+      if (call.method == 'getStatus') return _statusMap();
+      return null;
+    });
+  }
+
   testWidgets('La inicio muestra el estado desconectado y la marca', (tester) async {
+    mockAccount();
     await tester.pumpWidget(ToDusVpnApp(bridge: VpnBridge()));
+    await tester.pumpAndSettle();
 
     expect(find.text('ToDus'), findsOneWidget);
     expect(find.text('Desconectado'), findsOneWidget);
@@ -57,9 +77,27 @@ void main() {
     expect(find.text('Registro'), findsOneWidget);
   });
 
+  testWidgets('Sin cuenta: aparece la pantalla «Ingresar número»', (tester) async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(_channel, (call) async {
+      if (call.method == 'getAccount') return accountMap(hasAccount: false);
+      if (call.method == 'getStatus') return _statusMap();
+      return null;
+    });
+    await tester.pumpWidget(ToDusVpnApp(bridge: VpnBridge()));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Ingresar número'), findsOneWidget);
+    expect(find.textContaining('Por favor, ingresa el número'), findsOneWidget);
+    expect(find.text('+53'), findsOneWidget);
+    expect(find.text('Continuar'), findsOneWidget);
+    expect(find.byType(CustomPaint), findsWidgets); // bandera cubana
+  });
+
   testWidgets('Estado activo: muestra Protegido, duración y velocidades', (tester) async {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(_channel, (call) async {
+      if (call.method == 'getAccount') return accountMap();
       if (call.method == 'getStatus') {
         return _statusMap(state: 'activa', uptimeMs: 754000);
       }
@@ -68,14 +106,13 @@ void main() {
 
     final bridge = VpnBridge();
     await tester.pumpWidget(ToDusVpnApp(bridge: bridge));
+    await tester.pumpAndSettle();
     await bridge.poll();
     await tester.pump();
 
     expect(find.text('Protegido'), findsOneWidget);
     expect(find.text('Conectado'), findsOneWidget);
-    expect(find.textContaining('Relay ToDus'), findsOneWidget);
-    expect(find.text('12:34'), findsNothing); // la duración es 00:12:34
-    expect(find.text('00:12:34 · Relay ToDus'), findsOneWidget);
+    expect(find.text('00:12:34 · RTC'), findsOneWidget);
     expect(find.text('822.3 KB'), findsOneWidget); // datos bajados (842000 B)
     expect(find.text('118.2 KB'), findsOneWidget); // datos subidos (121000 B)
     expect(find.text('3 activas'), findsOneWidget); // conexiones TCP
@@ -84,6 +121,7 @@ void main() {
   testWidgets('Estado de error: muestra el aviso con el último error', (tester) async {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(_channel, (call) async {
+      if (call.method == 'getAccount') return accountMap();
       if (call.method == 'getStatus') {
         return _statusMap(state: 'error', lastError: 'No se pudo establecer la VPN');
       }
@@ -92,6 +130,7 @@ void main() {
 
     final bridge = VpnBridge();
     await tester.pumpWidget(ToDusVpnApp(bridge: bridge));
+    await tester.pumpAndSettle();
     await bridge.poll();
     await tester.pump();
 
@@ -103,6 +142,7 @@ void main() {
     var connects = 0;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(_channel, (call) async {
+      if (call.method == 'getAccount') return accountMap();
       if (call.method == 'connect') {
         connects++;
         return true;
@@ -114,6 +154,7 @@ void main() {
     });
 
     await tester.pumpWidget(ToDusVpnApp(bridge: VpnBridge()));
+    await tester.pumpAndSettle();
     await tester.tap(find.byIcon(Icons.power_settings_new));
     await tester.pump();
     await tester.pump();

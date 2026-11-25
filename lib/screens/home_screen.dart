@@ -88,17 +88,24 @@ class HomeScreen extends StatelessWidget {
                             ),
                           ),
                           const SizedBox(height: 6),
-                          Center(
-                            child: Text(
-                              active
-                                  ? '${formatDuration(snapshot.stats.uptimeMs)} · Relay ToDus'
-                                  : vpnStatusHint(state),
-                              style: tabular(
-                                theme.textTheme.bodyMedium!.copyWith(color: AppColors.textMuted),
+                          Builder(builder: (context) {
+                            final phaseLabel = snapshot.rtcPhaseLabel;
+                            final subtitle = active
+                                ? '${formatDuration(snapshot.stats.uptimeMs)} ·'
+                                    ' RTC${snapshot.rtcServerPhone.isEmpty ? '' : ' vía ${snapshot.rtcServerPhone}'}'
+                                : (state == VpnState.connecting && phaseLabel.isNotEmpty
+                                    ? phaseLabel
+                                    : vpnStatusHint(state));
+                            return Center(
+                              child: Text(
+                                subtitle,
+                                style: tabular(
+                                  theme.textTheme.bodyMedium!.copyWith(color: AppColors.textMuted),
+                                ),
+                                textAlign: TextAlign.center,
                               ),
-                              textAlign: TextAlign.center,
-                            ),
-                          ),
+                            );
+                          }),
                           if (state == VpnState.error && snapshot.lastError.isNotEmpty) ...[
                             const SizedBox(height: 18),
                             _ErrorBanner(message: snapshot.lastError),

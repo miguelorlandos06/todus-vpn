@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 
+import '../theme/app_theme.dart';
 import '../widgets/panels.dart';
 
 class AboutScreen extends StatelessWidget {
   const AboutScreen({super.key});
 
-  static const String appVersion = '1.1.0';
+  static const String appVersion = '1.5.0';
 
   @override
   Widget build(BuildContext context) {
@@ -52,13 +53,18 @@ class AboutScreen extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'ToDus Relay VPN',
+                            'ToDus VPN (RTC)',
                             style: theme.textTheme.titleLarge,
                           ),
                           const SizedBox(height: 4),
                           Text(
                             'Versión $appVersion',
                             style: theme.textTheme.bodyMedium,
+                          ),
+                          const SizedBox(height: 2),
+                          const Text(
+                            'Túnel WebRTC DataChannel por TURN de toDus (rtcvpn-server)',
+                            style: TextStyle(color: AppColors.textMuted, fontSize: 12),
                           ),
                           const SizedBox(height: 2),
                           Text(
