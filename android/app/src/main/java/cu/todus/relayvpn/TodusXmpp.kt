@@ -132,7 +132,10 @@ class TodusXmpp(
 
     /** Envía un mensaje <m> al JID indicado. */
     fun sendMessage(toJid: String, body: String) {
-        writeRaw("<m o='$toJid' t='c' i='${randomId(16)}' xmlns='jc'>${escapeXml(body)}</m>")
+        // FIX: el cuerpo DEBE ir en <b>...</b> (con <k xmlns='x8'/> delante),
+        // igual que el cliente oficial. toDus DESCARTA el texto plano hijo de
+        // <m> al re-serializar: el mensaje llegaba vacío al destinatario.
+        writeRaw("<m o='$toJid' t='c' i='${randomId(16)}' xmlns='jc'><k xmlns='x8'/><b>${escapeXml(body)}</b></m>")
     }
 
     /** Envía un IQ y espera su respuesta por id (timeout 15 s). */
@@ -216,15 +219,44 @@ class TodusXmpp(
 
     private fun dispatchStanza(stanza: String) {
         if (stanza.startsWith("<m ") || stanza.startsWith("<m>")) {
-            val start = stanza.indexOf('>')
-            val end = stanza.lastIndexOf("</m>")
-            if (start >= 0 && end > start) {
-                val body = unescapeXml(stanza.substring(start + 1, end))
-                if (!messages.offer(body)) AppLog.w("[xmpp] cola de mensajes llena, descartando")
+            // FIX: el cuerpo llega en <b>...</b>, no como texto plano.
+            // <m/> sin <b> son acks (dd/rd) o chat states: se ignoran.
+            val body = extractBody(stanza)
+            if (body.isNotEmpty() && !messages.offer(body)) {
+                AppLog.w("[xmpp] cola de mensajes llena, descartando")
             }
         } else if (stanza.startsWith("<iq ") || stanza.startsWith("<iq>")) {
             if (!iqResponses.offer(stanza)) AppLog.w("[xmpp] cola de IQ llena, descartando")
         }
+    }
+
+    /** Extrae el contenido de <b>...</b> (balanceado) y desescapa XML. */
+    private fun extractBody(stanza: String): String {
+        val start = stanza.indexOf("<b")
+        if (start < 0) return ""
+        val gt = stanza.indexOf('>', start)
+        if (gt < 0) return ""
+        if (stanza.substring(start, gt + 1).endsWith("/>")) return "" // <b/> vacío
+        var content = stanza.substring(gt + 1)
+        var depth = 1
+        var idx = 0
+        while (true) {
+            val nextOpen = content.indexOf("<b", idx)
+            val nextClose = content.indexOf("</b>", idx)
+            if (nextClose < 0) break
+            if (nextOpen >= 0 && nextOpen < nextClose) {
+                depth++
+                idx = nextOpen + 2
+                continue
+            }
+            depth--
+            if (depth == 0) {
+                content = content.substring(0, idx + nextClose)
+                return unescapeXml(content)
+            }
+            idx = nextClose + 4
+        }
+        return unescapeXml(content)
     }
 
     // ---------------------------------------------------------------- io
