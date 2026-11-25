@@ -146,12 +146,10 @@ class VpnSnapshot {
     switch (rtcPhase) {
       case 'autenticando':
         return 'Autenticando cuenta toDus…';
-      case 'descubriendo':
-        return 'Buscando servidor RTC…';
       case 'xmpp':
-        return 'Conectando señalización toDus…';
-      case 'solicitando':
-        return 'Solicitando canal al servidor…';
+        return 'Conectando señalización toDus (XMPP)…';
+      case 'llamando':
+        return 'Llamando al servidor por XMPP…';
       case 'esperando-canal':
         return 'Esperando canal libre (posición $rtcWaitlistPosition)…';
       case 'negociando':

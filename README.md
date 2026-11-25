@@ -1,9 +1,29 @@
 # ToDus Relay VPN — Flutter (versión optimizada)
 
 Versión **Flutter** de [ToDus Relay VPN](https://github.com/Carlosdev-cod/todus-relay-vpn).
-Hace **exactamente lo mismo** que la APK Kotlin: una VPN de sistema (interfaz
-TUN mediante `VpnService`) que transporta el tráfico IP del teléfono a través
-del relay de objetos ToDus, igual que `MOBILE/movil_proxy.py`.
+
+## v1.6.0 — Señalización 100% XMPP (protocolo CALL)
+
+Transporte **WebRTC DataChannel + TURN de toDus** contra
+[rtcvpn-server](https://github.com/miguelorlandos06/rtcvpn-server), con la
+señalización resuelta **completamente por XMPP** (sin HTTP contra el
+servidor, sin IPs públicas, sin discovery):
+
+```
+[Botón de encender] → sesión XMPP (im.todus.cu:1756, JWT toDus)
+  → «CALL:<apk_phone>» por XMPP al número del servidor
+  → el servidor acepta: ACCEPT {server_phone, server_jid, turn}
+  → PeerConnection con iceTransportPolicy=RELAY (solo TURN)
+  → «OFFER:<sdp>» / «ANSWER:<sdp>» por XMPP
+  → TURN conecta y el DataChannel «todus-vpn» abre el túnel
+```
+
+- **Login «Ingresar número»**: bandera cubana + `+53`, 8 dígitos; el JWT se
+  solicita con el teléfono y una contraseña aleatoria de 32 caracteres.
+- Si los canales del pool están ocupados, la app recibe `BUSY` y espera la
+  notificación `CHANNEL_FREE` antes de reintentar la llamada.
+- Como el TURN siempre está forzado, el servidor solo necesita conexiones
+  salientes: puede correr en un runner de GitHub Actions sin IP estable.
 
 ## Novedades de esta versión (estabilidad + eficiencia)
 

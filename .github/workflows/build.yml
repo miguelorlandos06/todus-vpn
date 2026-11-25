@@ -39,19 +39,27 @@ jobs:
       - name: Pruebas
         run: flutter test
 
+      - name: Versión
+        id: ver
+        run: |
+          VERSION=$(grep -m1 '^version:' pubspec.yaml | sed 's/version: *//' | cut -d'+' -f1)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Versión: $VERSION"
+
       - name: Compilar APK (release AOT, solo armeabi-v7a)
         run: flutter build apk --release --target-platform android-arm
 
       - name: Preparar APK
         run: |
           mkdir -p dist
-          cp build/app/outputs/flutter-apk/app-release.apk "dist/ToDusRelayVPN-Flutter-${GITHUB_REF_NAME}-armeabi-v7a-release.apk"
+          cp build/app/outputs/flutter-apk/app-release.apk \
+            "dist/ToDusVPN-RTC-v${{ steps.ver.outputs.version }}.apk"
           ls -la dist
 
       - name: Subir artifact
         uses: actions/upload-artifact@v4
         with:
-          name: apk-armeabi-v7a-${{ github.ref_name }}
+          name: apk-release
           path: dist/*.apk
 
       - name: Crear Release con la APK (solo en tags v*)
@@ -60,7 +68,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release create "${GITHUB_REF_NAME}" \
-            "dist/ToDusRelayVPN-Flutter-${GITHUB_REF_NAME}-armeabi-v7a-release.apk" \
+            "dist/ToDusVPN-RTC-v${{ steps.ver.outputs.version }}.apk" \
             --repo "${GITHUB_REPOSITORY}" \
-            --title "ToDus Relay VPN (Flutter) ${GITHUB_REF_NAME}" \
+            --title "ToDus Relay VPN (RTC) ${GITHUB_REF_NAME}" \
             --generate-notes

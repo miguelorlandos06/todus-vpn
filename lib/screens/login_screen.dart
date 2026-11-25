@@ -10,11 +10,13 @@ import 'root_shell.dart';
 /// Pantalla de entrada: «Ingresar número».
 ///
 /// Estructura (según especificación):
+///  - Marca arriba («ToDus VPN» con emblema).
 ///  - Título superior centrado: «Ingresar número».
 ///  - Subtítulo: «Por favor, ingresa el número de tú cuenta de toDus para
 ///    continuar.»
 ///  - Contenedor cuadrado con la bandera cubana y «+53»; a su lado,
-///    contenedor rectangular para el número de 8 dígitos.
+///    contenedor rectangular para el número de 8 dígitos, con indicador de
+///    progreso dígito a dígito.
 ///  - Botón «Continuar» en la parte inferior: solicita el JWT de toDus con el
 ///    teléfono y una contraseña aleatoria de 32 caracteres (generada y
 ///    persistida en Kotlin) y lleva al Home.
@@ -38,6 +40,7 @@ class _LoginScreenState extends State<LoginScreen> {
   void initState() {
     super.initState();
     _controller.addListener(() => setState(() {}));
+    _focus.addListener(() => setState(() {}));
   }
 
   @override
@@ -91,6 +94,8 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final digits = _controller.text;
+
     return Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
@@ -104,7 +109,10 @@ class _LoginScreenState extends State<LoginScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: <Widget>[
-                      const SizedBox(height: 56),
+                      const SizedBox(height: 40),
+                      // ── Marca ───────────────────────────────────────────
+                      const _BrandMark(),
+                      const SizedBox(height: 36),
                       // ── Título superior centrado ──────────────────────
                       Text(
                         'Ingresar número',
@@ -113,156 +121,55 @@ class _LoginScreenState extends State<LoginScreen> {
                           fontFamily: kDisplayFont,
                           fontWeight: FontWeight.w700,
                           color: AppColors.textPrimary,
+                          letterSpacing: -0.2,
                         ),
                       ),
-                      const SizedBox(height: 12),
+                      const SizedBox(height: 10),
                       // ── Subtítulo ─────────────────────────────────────
                       Text(
                         'Por favor, ingresa el número de tú cuenta de toDus para continuar.',
                         textAlign: TextAlign.center,
                         style: theme.textTheme.bodyMedium?.copyWith(
                           color: AppColors.textMuted,
-                          height: 1.4,
+                          height: 1.45,
                         ),
                       ),
-                      const SizedBox(height: 40),
+                      const SizedBox(height: 36),
                       // ── Bandera +53 │ número de 8 dígitos ─────────────
                       Row(
                         crossAxisAlignment: CrossAxisAlignment.center,
                         children: <Widget>[
                           // Contenedor cuadrado: bandera cubana + +53
-                          Container(
-                            width: 92,
-                            height: 92,
-                            decoration: BoxDecoration(
-                              color: AppColors.surface,
-                              borderRadius: BorderRadius.circular(16),
-                              border: Border.all(
-                                color: _focus.hasFocus
-                                    ? AppColors.accent
-                                    : AppColors.outline,
-                                width: 1.2,
-                              ),
-                            ),
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: <Widget>[
-                                const CustomPaint(
-                                  size: Size(44, 26),
-                                  painter: CubanFlagPainter(),
-                                ),
-                                const SizedBox(height: 8),
-                                Text(
-                                  '+53',
-                                  style: theme.textTheme.titleMedium?.copyWith(
-                                    fontFamily: kMonoFont,
-                                    fontWeight: FontWeight.w600,
-                                    color: AppColors.textPrimary,
-                                    fontSize: 16,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
+                          _FlagBox(focused: _focus.hasFocus),
                           const SizedBox(width: 12),
                           // Contenedor rectangular: número de 8 dígitos
-                          Expanded(
-                            child: Container(
-                              height: 92,
-                              decoration: BoxDecoration(
-                                color: AppColors.surface,
-                                borderRadius: BorderRadius.circular(16),
-                                border: Border.all(
-                                  color: _focus.hasFocus
-                                      ? AppColors.accent
-                                      : AppColors.outline,
-                                  width: 1.2,
-                                ),
-                              ),
-                              child: TextField(
-                                controller: _controller,
-                                focusNode: _focus,
-                                autofocus: true,
-                                enabled: !_working,
-                                keyboardType: TextInputType.phone,
-                                maxLength: 8,
-                                inputFormatters: <TextInputFormatter>[
-                                  FilteringTextInputFormatter.digitsOnly,
-                                ],
-                                textAlign: TextAlign.left,
-                                textInputAction: TextInputAction.done,
-                                onSubmitted: (_) => _continue(),
-                                style: theme.textTheme.headlineSmall?.copyWith(
-                                  fontFamily: kMonoFont,
-                                  fontWeight: FontWeight.w500,
-                                  color: AppColors.textPrimary,
-                                  letterSpacing: 2.4,
-                                ),
-                                decoration: InputDecoration(
-                                  counterText: '',
-                                  hintText: '5xxxxxxx',
-                                  hintStyle: theme.textTheme.headlineSmall?.copyWith(
-                                    fontFamily: kMonoFont,
-                                    color: AppColors.textMuted.withValues(alpha: 0.45),
-                                    letterSpacing: 2.4,
-                                  ),
-                                  border: InputBorder.none,
-                                  contentPadding: const EdgeInsets.symmetric(
-                                    horizontal: 20,
-                                    vertical: 24,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
+                          Expanded(child: _PhoneBox(controller: _controller, focus: _focus)),
                         ],
                       ),
-                      const SizedBox(height: 16),
-                      // Ayuda: cuenta atrás de dígitos.
+                      const SizedBox(height: 18),
+                      // ── Progreso dígito a dígito ──────────────────────
+                      _DigitProgress(count: digits.length),
+                      const SizedBox(height: 10),
                       Padding(
                         padding: const EdgeInsets.only(left: 4),
                         child: Text(
-                          _controller.text.isEmpty
+                          digits.isEmpty
                               ? 'Número cubano de 8 dígitos (sin el 53)'
-                              : (_controller.text.length < 8
-                                  ? 'Faltan ${8 - _controller.text.length} dígitos'
+                              : (digits.length < 8
+                                  ? 'Faltan ${8 - digits.length} dígitos'
                                   : 'Número completo'),
                           style: theme.textTheme.labelSmall?.copyWith(
-                            color: _controller.text.length == 8
+                            color: digits.length == 8
                                 ? AppColors.accent
                                 : AppColors.textMuted,
                           ),
                         ),
                       ),
                       if (_error != null) ...<Widget>[
-                        const SizedBox(height: 16),
-                        Container(
-                          padding: const EdgeInsets.all(14),
-                          decoration: BoxDecoration(
-                            color: AppColors.danger.withValues(alpha: 0.08),
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(
-                              color: AppColors.danger.withValues(alpha: 0.4),
-                            ),
-                          ),
-                          child: Row(
-                            children: <Widget>[
-                              const Icon(Icons.error_outline,
-                                  color: AppColors.danger, size: 20),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: Text(
-                                  _error!,
-                                  style: theme.textTheme.bodySmall?.copyWith(
-                                    color: AppColors.textPrimary,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
+                        const SizedBox(height: 18),
+                        _ErrorBanner(message: _error!),
                       ],
-                      const SizedBox(height: 48),
+                      const SizedBox(height: 40),
                     ],
                   ),
                 ),
@@ -274,27 +181,343 @@ class _LoginScreenState extends State<LoginScreen> {
       // ── Botón Continuar en la parte inferior ─────────────────────────────
       bottomNavigationBar: SafeArea(
         minimum: const EdgeInsets.fromLTRB(28, 0, 28, 24),
-        child: FilledButton(
-          onPressed: _canContinue ? _continue : null,
-          style: FilledButton.styleFrom(
-            minimumSize: const Size.fromHeight(56),
-            backgroundColor: _canContinue ? AppColors.accent : AppColors.surfaceRaised,
-            foregroundColor: _canContinue
-                ? const Color(0xFF04211C)
-                : AppColors.textMuted,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          ),
-          child: _working
-              ? const SizedBox(
-                  width: 24,
-                  height: 24,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2.6,
-                    color: AppColors.accent,
-                  ),
-                )
-              : const Text('Continuar', style: TextStyle(fontSize: 17)),
+        child: _ContinueButton(
+          enabled: _canContinue,
+          working: _working,
+          onPressed: _continue,
         ),
+      ),
+    );
+  }
+}
+
+/// Marca de la app sobre la pantalla de login: emblema + wordmark.
+class _BrandMark extends StatelessWidget {
+  const _BrandMark();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      children: <Widget>[
+        Container(
+          width: 64,
+          height: 64,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: <Color>[AppColors.accentDeep, AppColors.accent],
+            ),
+            boxShadow: <BoxShadow>[
+              BoxShadow(
+                color: AppColors.accent.withValues(alpha: 0.28),
+                blurRadius: 30,
+                offset: const Offset(0, 10),
+              ),
+            ],
+          ),
+          child: const Icon(Icons.shield_outlined, size: 32, color: Color(0xFF04211C)),
+        ),
+        const SizedBox(height: 14),
+        Text(
+          'ToDus VPN',
+          style: theme.textTheme.titleLarge?.copyWith(
+            fontFamily: kDisplayFont,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0.4,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Contenedor cuadrado con la bandera cubana y el prefijo «+53».
+///
+/// El borde se anima al enfocar el campo (sincronizado con _PhoneBox).
+class _FlagBox extends StatelessWidget {
+  const _FlagBox({required this.focused});
+
+  final bool focused;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOut,
+      width: 96,
+      height: 96,
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: focused ? AppColors.accent : AppColors.outline,
+          width: focused ? 1.6 : 1.2,
+        ),
+        boxShadow: focused
+            ? <BoxShadow>[
+                BoxShadow(
+                  color: AppColors.accent.withValues(alpha: 0.18),
+                  blurRadius: 22,
+                  offset: const Offset(0, 4),
+                ),
+              ]
+            : null,
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: <Widget>[
+          Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(6),
+              boxShadow: const <BoxShadow>[
+                BoxShadow(color: Color(0x66000000), blurRadius: 8, offset: Offset(0, 3)),
+              ],
+            ),
+            child: const ClipRRect(
+              borderRadius: BorderRadius.all(Radius.circular(6)),
+              child: CustomPaint(
+                size: Size(46, 28),
+                painter: CubanFlagPainter(),
+              ),
+            ),
+          ),
+          const SizedBox(height: 9),
+          const Text(
+            '+53',
+            style: TextStyle(
+              fontFamily: kMonoFont,
+              fontWeight: FontWeight.w600,
+              color: AppColors.textPrimary,
+              fontSize: 16,
+              letterSpacing: 0.5,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Contenedor rectangular del número de teléfono (8 dígitos).
+class _PhoneBox extends StatelessWidget {
+  const _PhoneBox({required this.controller, required this.focus});
+
+  final TextEditingController controller;
+  final FocusNode focus;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final focused = focus.hasFocus;
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOut,
+      height: 96,
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: focused ? AppColors.accent : AppColors.outline,
+          width: focused ? 1.6 : 1.2,
+        ),
+        boxShadow: focused
+            ? <BoxShadow>[
+                BoxShadow(
+                  color: AppColors.accent.withValues(alpha: 0.18),
+                  blurRadius: 22,
+                  offset: const Offset(0, 4),
+                ),
+              ]
+            : null,
+      ),
+      child: TextField(
+        controller: controller,
+        focusNode: focus,
+        autofocus: true,
+        cursorColor: AppColors.accent,
+        cursorWidth: 2,
+        enabled: true,
+        keyboardType: TextInputType.phone,
+        maxLength: 8,
+        inputFormatters: <TextInputFormatter>[
+          FilteringTextInputFormatter.digitsOnly,
+        ],
+        textAlign: TextAlign.left,
+        textInputAction: TextInputAction.done,
+        onSubmitted: (_) {},
+        style: theme.textTheme.headlineSmall?.copyWith(
+          fontFamily: kMonoFont,
+          fontWeight: FontWeight.w500,
+          color: AppColors.textPrimary,
+          letterSpacing: 2.4,
+        ),
+        decoration: InputDecoration(
+          counterText: '',
+          hintText: '5xxxxxxx',
+          hintStyle: theme.textTheme.headlineSmall?.copyWith(
+            fontFamily: kMonoFont,
+            color: AppColors.textMuted.withValues(alpha: 0.4),
+            letterSpacing: 2.4,
+          ),
+          border: InputBorder.none,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 26),
+        ),
+      ),
+    );
+  }
+}
+
+/// Indicador de progreso: 8 segmentos que se llenan con los dígitos escritos.
+class _DigitProgress extends StatelessWidget {
+  const _DigitProgress({required this.count});
+
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      child: Row(
+        children: List<Widget>.generate(8, (i) {
+          final filled = i < count;
+          return Expanded(
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 180),
+              curve: Curves.easeOut,
+              margin: const EdgeInsets.symmetric(horizontal: 3),
+              height: 4,
+              decoration: BoxDecoration(
+                color: filled
+                    ? AppColors.accent
+                    : AppColors.surfaceRaised,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          );
+        }),
+      ),
+    );
+  }
+}
+
+/// Botón «Continuar»: degradado teal cuando está activo, apagado si faltan
+/// dígitos; spinner mientras se solicita el JWT.
+class _ContinueButton extends StatelessWidget {
+  const _ContinueButton({
+    required this.enabled,
+    required this.working,
+    required this.onPressed,
+  });
+
+  final bool enabled;
+  final bool working;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 220),
+      height: 58,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(18),
+        gradient: enabled
+            ? const LinearGradient(
+                begin: Alignment.centerLeft,
+                end: Alignment.centerRight,
+                colors: <Color>[AppColors.accentDeep, AppColors.accent],
+              )
+            : null,
+        color: enabled ? null : AppColors.surfaceRaised,
+        boxShadow: enabled
+            ? <BoxShadow>[
+                BoxShadow(
+                  color: AppColors.accent.withValues(alpha: 0.3),
+                  blurRadius: 24,
+                  offset: const Offset(0, 8),
+                ),
+              ]
+            : null,
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(18),
+          onTap: enabled ? onPressed : null,
+          child: Center(
+            child: working
+                ? const SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.6,
+                      color: AppColors.accent,
+                    ),
+                  )
+                : Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      Text(
+                        'Continuar',
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          fontFamily: kDisplayFont,
+                          fontWeight: FontWeight.w700,
+                          color: enabled
+                              ? const Color(0xFF04211C)
+                              : AppColors.textMuted,
+                          fontSize: 17,
+                          letterSpacing: 0.2,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Icon(
+                        Icons.arrow_forward,
+                        size: 20,
+                        color: enabled ? const Color(0xFF04211C) : AppColors.textMuted,
+                      ),
+                    ],
+                  ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Aviso de error con el último fallo del login.
+class _ErrorBanner extends StatelessWidget {
+  const _ErrorBanner({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.danger.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.danger.withValues(alpha: 0.4)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          const Icon(Icons.error_outline, color: AppColors.danger, size: 20),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              message,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: AppColors.textPrimary,
+                height: 1.35,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

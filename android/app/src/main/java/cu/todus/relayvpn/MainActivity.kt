@@ -238,7 +238,7 @@ class MainActivity : FlutterActivity() {
             "rtcPhase" to (rtc?.phase ?: ""),
             "rtcPhaseDetail" to (rtc?.phaseDetail ?: ""),
             "rtcServerPhone" to (rtc?.serverPhone ?: ""),
-            "rtcServerUrl" to (rtc?.serverUrl ?: ""),
+            "rtcServerTarget" to (rtc?.serverTargetPhone ?: ""),
             "rtcWaitlistPosition" to (rtc?.waitlistPosition ?: 0),
             "rtcFramesUp" to (stats?.rtcFramesUp?.get() ?: 0L),
             "rtcFramesDown" to (stats?.rtcFramesDown?.get() ?: 0L),

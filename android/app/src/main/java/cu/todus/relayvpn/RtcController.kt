@@ -1,10 +1,7 @@
 package cu.todus.relayvpn
 
 import android.content.Context
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import org.webrtc.DataChannel
 import org.webrtc.MediaConstraints
@@ -22,21 +19,24 @@ import java.util.concurrent.atomic.AtomicInteger
 /**
  * Controlador del túnel WebRTC contra rtcvpn-server.
  *
- * Flujo completo (cliente = oferente, igual que espera el servidor):
- *  1. Descubre la URL del servidor RTC (ajuste manual o auto-descubrimiento
- *     vía GitHub raw: server-ip.json que publica el workflow del servidor).
- *  2. POST /connect {"apk_phone": "53XXXXXXXX"} → teléfono del pool asignado
- *     + JID + credenciales TURN. Si todos ocupados → lista de espera y se
- *     espera la notificación XMPP "CHANNEL_FREE:<phone>".
- *  3. XMPP propio (im.todus.cu:1756) con el JWT de toDus.
- *  4. PeerConnection con iceTransportPolicy=RELAY (solo TURN, como el server)
- *     + DataChannel "todus-vpn" + OFFER con candidatos (gathering completo,
- *     sin trickle: el servidor espera el SDP final en un solo mensaje).
- *  5. Envía "OFFER:<sdp>" al JID del server por XMPP y espera "ANSWER:<sdp>".
- *  6. DataChannel abierto → túnel listo; el SOCKS5 local abre streams con el
- *     protocolo de frames del servidor:
+ * Flujo v2 (señalización 100% XMPP, sin HTTP contra el servidor):
+ *  1. Autentica la cuenta toDus (HTTPS auth.todus.cu, como siempre).
+ *  2. Abre la sesión XMPP propia (im.todus.cu:1756, TLS).
+ *  3. Envía "CALL:<apk_phone>" por XMPP al NÚMERO del servidor (ajuste
+ *     `rtc_server_phone`, por defecto el primer número del pool).
+ *  4. El servidor acepta y responde ACCEPT:{server_phone, server_jid, turn}.
+ *     Si todos ocupados → BUSY:{position} y espera la notificación XMPP
+ *     "CHANNEL_FREE:<phone>" para reintentar la llamada.
+ *  5. PeerConnection con iceTransportPolicy=RELAY (solo TURN) + DataChannel
+ *     "todus-vpn" + OFFER con candidatos (gathering completo, sin trickle).
+ *  6. Envía "OFFER:<sdp>" al JID asignado por XMPP y espera "ANSWER:<sdp>".
+ *  7. DataChannel abierto → TURN conectado → túnel listo; el SOCKS5 local
+ *     abre streams con el protocolo de frames del servidor:
  *     [tipo:1][stream_id:4 BE][len:2 BE][payload]
  *     OPEN(host:port) / OPENED / DATA / CLOSE / ERR / PING / PONG.
+ *
+ * Ventaja clave: el servidor solo necesita conexiones SALIENTES (XMPP + TURN
+ * de toDus) — ninguna IP pública, ni cleartext HTTP, ni discovery.
  */
 class RtcController(
     private val context: Context,
@@ -62,16 +62,20 @@ class RtcController(
         const val ERR_CONN_REFUSED: Byte = 3
         const val ERR_CONN_TIMEOUT: Byte = 4
 
-        const val DISCOVERY_URL =
-            "https://raw.githubusercontent.com/miguelorlandos06/rtcvpn-server/server-ip/server-ip.json"
+        /** Número toDus del servidor (pool) al que la APK «llama» por XMPP. */
+        const val DEFAULT_SERVER_PHONE = "5350256349"
 
-        /** URL del servidor (manual o descubierta) base sin barra final. */
-        fun normalizeServerUrl(raw: String): String {
-            var u = raw.trim()
-            if (u.isEmpty()) return ""
-            if (!u.startsWith("http://") && !u.startsWith("https://")) u = "http://$u"
-            while (u.endsWith("/")) u = u.dropLast(1)
-            return u
+        /** JID XMPP a partir del número de teléfono. */
+        fun buildJid(phone: String): String = "${phone.trim()}@im.todus.cu"
+
+        /** Normaliza un teléfono cubano a 10 dígitos nacionales (5XXXXXXXXX). */
+        fun normalizePhone(raw: String): String {
+            val digits = raw.filter { it in '0'..'9' }
+            return when {
+                digits.length == 12 && digits.startsWith("53") -> digits.substring(2)
+                digits.length == 8 -> "53$digits"
+                else -> digits
+            }
         }
     }
 
@@ -81,9 +85,9 @@ class RtcController(
         private set
     @Volatile var phaseDetail: String = ""
         private set
-    @Volatile var serverUrl: String = ""
-        private set
     @Volatile var serverPhone: String = ""
+        private set
+    @Volatile var serverTargetPhone: String = ""
         private set
     @Volatile var waitlistPosition: Int = 0
         private set
@@ -118,6 +122,10 @@ class RtcController(
     /**
      * Conecta el túnel completo (bloqueante). Lanza excepción con mensaje
      * humano si algo falla de forma fatal.
+     *
+     * Flujo (todo por XMPP, cero HTTP contra el servidor):
+     * autenticando → xmpp → llamando (CALL) → [esperando-canal] →
+     * negociando (OFFER/ANSWER + TURN) → conectado (DataChannel abierto).
      */
     fun connect() {
         check(!running) { "túnel ya conectado" }
@@ -131,42 +139,51 @@ class RtcController(
             }
             account = acct
 
-            setPhase("descubriendo", "servidor RTC")
-            serverUrl = resolveServerUrl()
-
+            // 1. Botón de encender → primero la conexión XMPP.
             setPhase("xmpp", "sesión XMPP ${acct.phone}")
             val x = TodusXmpp(acct.phone, acct.jwt)
             x.connect()
             xmpp = x
 
-            // ── /connect: pedir canal ────────────────────────────────────
+            // 2. Llamada al número del servidor por XMPP (CALL → ACCEPT/BUSY).
+            serverTargetPhone = normalizeServerPhone(settings.rtcServerPhone)
+            if (serverTargetPhone.length != 10) {
+                throw IllegalStateException(
+                    "Número del servidor RTC inválido («${settings.rtcServerPhone}»). " +
+                        "Configúralo en Ajustes → Servidor RTC.",
+                )
+            }
             var connectResp: ConnectResp? = null
-            var waitPos = 0
             while (true) {
-                setPhase("solicitando", "canal al pool del servidor")
-                val json = httpPost("$serverUrl/connect", JSONObject().put("apk_phone", acct.phone))
-                if (json.optString("error") == "all_busy") {
-                    waitPos = json.optInt("waitlist_position", 0)
-                    waitlistPosition = waitPos
-                    setPhase("esperando-canal", "posición $waitPos en lista de espera")
-                    AppLog.i("[rtc] todos los canales ocupados; esperando (posición $waitPos)")
-                    // Esperar CHANNEL_FREE vía XMPP (hasta 10 min; luego reintentar).
-                    val freed = waitForChannelFree(x, 10 * 60_000L)
-                    if (!freed) continue
-                    continue
+                setPhase("llamando", "solicitando canal a $serverTargetPhone")
+                x.sendMessage(buildJid(serverTargetPhone), "CALL:${acct.phone}")
+                AppLog.i("[rtc] CALL enviado a $serverTargetPhone@im.todus.cu")
+
+                when (val resp = waitForCallAnswer(x, 30_000)) {
+                    is CallAnswer.Accept -> {
+                        connectResp = resp.creds
+                        break
+                    }
+                    is CallAnswer.Busy -> {
+                        waitlistPosition = resp.position
+                        setPhase("esperando-canal", "posición ${resp.position} en lista de espera")
+                        AppLog.i("[rtc] canales ocupados; esperando CHANNEL_FREE (posición ${resp.position})")
+                        waitForChannelFree(x, 10 * 60_000L)
+                        // Al liberarse un canal: reintentar la llamada.
+                        continue
+                    }
+                    is CallAnswer.Timeout -> {
+                        AppLog.w("[rtc] sin respuesta del servidor al CALL; reintentando…")
+                        continue
+                    }
                 }
-                if (!json.has("server_phone")) {
-                    throw IllegalStateException("Respuesta inesperada de /connect: $json")
-                }
-                connectResp = parseConnectResp(json)
-                break
             }
             waitlistPosition = 0
-            val c = connectResp ?: throw IllegalStateException("/connect no asignó canal")
+            val c = connectResp ?: throw IllegalStateException("el servidor no asignó canal")
             serverPhone = c.serverPhone
-            setPhase("negociando", "WebRTC con ${c.serverPhone}")
+            setPhase("negociando", "WebRTC (TURN) con ${c.serverPhone}")
 
-            // ── WebRTC: oferente con TURN forzado ────────────────────────
+            // 3. El servidor aceptó: PeerConnection con TURN forzado + OFFER.
             setupWebRtc(c)
             val offerSdp = createOfferWithCandidates()
             x.sendMessage(c.serverJid, "OFFER:$offerSdp")
@@ -184,7 +201,7 @@ class RtcController(
             startPingLoop()
             // Aviso opcional al server (lo registra en su log).
             x.sendMessage(c.serverJid, "READY")
-            setPhase("conectado", "vía ${c.serverPhone}")
+            setPhase("conectado", "vía ${c.serverPhone} (TURN)")
             stats.rtcConnectedAt.set(System.currentTimeMillis())
             AppLog.i("[rtc] túnel activo con ${c.serverPhone} (TURN relay)")
         } catch (e: Exception) {
@@ -199,48 +216,40 @@ class RtcController(
         AppLog.d("[rtc] fase: $p ($detail)")
     }
 
-    /** URL del server: ajuste manual o auto-descubrimiento (3 intentos). */
-    private fun resolveServerUrl(): String {
-        val manual = normalizeServerUrl(settings.rtcServer)
-        if (manual.isNotEmpty()) {
-            AppLog.i("[rtc] servidor manual: $manual")
-            return manual
-        }
-        var lastErr: Exception? = null
-        for (attempt in 1..3) {
-            try {
-                val req = Request.Builder().url(DISCOVERY_URL).get().build()
-                http.newCall(req).execute().use { resp ->
-                    if (!resp.isSuccessful) throw IllegalStateException("HTTP ${resp.code} en discovery")
-                    val body = resp.body?.string() ?: ""
-                    val json = JSONObject(body)
-                    val ip = json.optString("ip", "")
-                    val port = json.optInt("port", 8080)
-                    if (ip.isEmpty()) throw IllegalStateException("discovery sin ip")
-                    val url = "http://$ip:$port"
-                    AppLog.i("[rtc] servidor descubierto: $url (actualizado ${json.optString("updated", "")})")
-                    return url
-                }
-            } catch (e: Exception) {
-                lastErr = e
-                AppLog.w("[rtc] discovery intento $attempt falló: ${e.message}")
-                Thread.sleep(2000L * attempt)
-            }
-        }
-        throw IllegalStateException("No se pudo descubrir el servidor RTC (${lastErr?.message}). " +
-            "Configura su dirección en Ajustes.")
+    /** Normaliza el número del servidor guardado en Ajustes (10 dígitos). */
+    private fun normalizeServerPhone(raw: String): String =
+        normalizePhone(raw.ifBlank { DEFAULT_SERVER_PHONE })
+
+    /** Respuesta del servidor a un CALL. */
+    private sealed interface CallAnswer {
+        data class Accept(val creds: ConnectResp) : CallAnswer
+        data class Busy(val position: Int) : CallAnswer
+        data object Timeout : CallAnswer
     }
 
-    private fun httpPost(url: String, body: JSONObject): JSONObject {
-        val req = Request.Builder()
-            .url(url)
-            .post(body.toString().toRequestBody("application/json; charset=utf-8".toMediaType()))
-            .build()
-        http.newCall(req).execute().use { resp ->
-            val raw = resp.body?.string() ?: ""
-            if (!resp.isSuccessful) throw IllegalStateException("HTTP ${resp.code} en $url")
-            return if (raw.isEmpty()) JSONObject() else JSONObject(raw)
+    /**
+     * Espera por XMPP la respuesta del CALL: ACCEPT (JSON con creds) o BUSY
+     * (posición en lista de espera). null → sin respuesta (timeout).
+     */
+    private fun waitForCallAnswer(x: TodusXmpp, timeoutMs: Long): CallAnswer {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline && !x.closed) {
+            val msg = x.recvMessage(1000) ?: continue
+            when {
+                msg.startsWith("ACCEPT:") -> {
+                    val json = JSONObject(msg.removePrefix("ACCEPT:"))
+                    AppLog.i("[rtc] llamada aceptada por ${json.optString("server_phone")}")
+                    return CallAnswer.Accept(parseConnectResp(json))
+                }
+                msg.startsWith("BUSY:") -> {
+                    val json = JSONObject(msg.removePrefix("BUSY:"))
+                    return CallAnswer.Busy(json.optInt("position", 0))
+                }
+                msg.startsWith("CHANNEL_FREE:") -> { /* notificación temprana: ignorar */ }
+                else -> AppLog.d("[xmpp] msg: ${msg.take(80)}")
+            }
         }
+        return CallAnswer.Timeout
     }
 
     private data class ConnectResp(
@@ -251,8 +260,9 @@ class RtcController(
         val turnPass: String,
     )
 
+    /** Parsea el JSON del ACCEPT (misma forma que el viejo /connect). */
     private fun parseConnectResp(json: JSONObject): ConnectResp {
-        val turn = json.optJSONObject("turn") ?: throw IllegalStateException("/connect sin TURN creds")
+        val turn = json.optJSONObject("turn") ?: throw IllegalStateException("ACCEPT sin TURN creds")
         return ConnectResp(
             serverPhone = json.optString("server_phone"),
             serverJid = json.optString("server_jid"),
@@ -630,23 +640,18 @@ class RtcController(
         running = false
         for (s in streams.values) s.onClosed()
         streams.clear()
-        // Avisar al server que libere el teléfono del pool.
-        val acct = account
+        // Avisar al server por XMPP que libere el teléfono del pool.
         val jid = serverPhone.let { if (it.isNotEmpty()) "$it@im.todus.cu" else "" }
         try {
             if (jid.isNotEmpty()) xmpp?.sendMessage(jid, "CLOSED")
-        } catch (e: Exception) {}
-        try {
-            if (serverPhone.isNotEmpty() && serverUrl.isNotEmpty()) {
-                httpPost("$serverUrl/disconnect", JSONObject().put("server_phone", serverPhone))
-            }
         } catch (e: Exception) {
-            AppLog.w("[rtc] /disconnect falló: ${e.message}")
+            AppLog.w("[rtc] CLOSED falló: ${e.message}")
         }
         cleanupQuietly()
         phase = "inactivo"
         phaseDetail = ""
         serverPhone = ""
+        serverTargetPhone = ""
     }
 
     private fun cleanupQuietly() {

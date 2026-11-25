@@ -20,7 +20,7 @@ import android.content.SharedPreferences
  */
 data class RelaySettings(
     val baseUrl: String,                 // (legacy relay S3; no se usa en RTC)
-    val rtcServer: String,               // URL manual del rtcvpn-server (vacío = auto-descubrimiento)
+    val rtcServerPhone: String,          // Número toDus del servidor al que se llama por XMPP
     val hostHeader: String?,             // TODUS_HOST_HEADER (legacy)
     val sharedSecret: ByteArray,          // PROXY_SHARED_SECRET (legacy)
     val verifyTls: Boolean,               // TODUS_VERIFY_TLS (legacy)
@@ -144,8 +144,10 @@ data class RelaySettings(
         // Conexión y seguridad (nuevos en v1.4).
         const val KEY_RELAY_SECRET = "relay_secret"
         const val KEY_BASE_URL = "base_url"
-        // Servidor RTC (WebRTC). Vacío = auto-descubrimiento vía GitHub raw.
-        const val KEY_RTC_SERVER = "rtc_server"
+        // Servidor RTC (WebRTC). Número toDus al que la APK «llama» por XMPP
+        // (protocolo v2: señalización 100% XMPP, sin HTTP ni discovery).
+        const val KEY_RTC_SERVER_PHONE = "rtc_server_phone"
+        const val DEFAULT_RTC_SERVER_PHONE = "5350256349"
 
         private val HEX64 = Regex("^[0-9a-fA-F]{64}$")
 
@@ -229,7 +231,7 @@ data class RelaySettings(
             return RelaySettings(
                 baseUrl = p.getString(KEY_BASE_URL, "")?.trim().takeUnless { it.isNullOrEmpty() }
                     ?: DEFAULT_BASE_URL,
-                rtcServer = p.getString(KEY_RTC_SERVER, "")?.trim() ?: "",
+                rtcServerPhone = migrateRtcServer(p),
                 hostHeader = DEFAULT_HOST_HEADER,
                 sharedSecret = secret,
                 verifyTls = DEFAULT_VERIFY_TLS,
@@ -314,7 +316,7 @@ data class RelaySettings(
                 KEY_RELAY_SECRET to (prefs(context).getString(KEY_RELAY_SECRET, "") ?: ""),
                 KEY_BASE_URL to (prefs(context).getString(KEY_BASE_URL, "") ?: ""),
                 "relay_secret_effective" to bytesToHex(s.sharedSecret),
-                KEY_RTC_SERVER to s.rtcServer,
+                KEY_RTC_SERVER_PHONE to s.rtcServerPhone,
             )
         }
 
@@ -347,6 +349,24 @@ data class RelaySettings(
                 }
             }.apply()
             return fromPrefs(context)
+        }
+
+        /**
+         * Migra el ajuste antiguo rtc_server (URL http://...) al nuevo
+         * rtc_server_phone: si el valor viejo era un número de teléfono lo
+         * conserva; si era una URL, usa el número por defecto del pool.
+         */
+        private fun migrateRtcServer(p: SharedPreferences): String {
+            val current = p.getString(KEY_RTC_SERVER_PHONE, null)?.trim()
+            if (!current.isNullOrEmpty()) return current
+            val legacy = p.getString("rtc_server", "")?.trim() ?: ""
+            val digits = legacy.filter { it in '0'..'9' }
+            if (digits.length == 10 || digits.length == 12) {
+                p.edit().putString(KEY_RTC_SERVER_PHONE, digits).apply()
+                return digits
+            }
+            p.edit().putString(KEY_RTC_SERVER_PHONE, DEFAULT_RTC_SERVER_PHONE).apply()
+            return DEFAULT_RTC_SERVER_PHONE
         }
 
         fun hexToBytes(hex: String): ByteArray {
